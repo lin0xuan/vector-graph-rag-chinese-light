@@ -16,6 +16,7 @@ from vector_graph_rag_chinese_light import ChineseLightRAG
 from vector_graph_rag_chinese_light.clients import Chat
 from vector_graph_rag_chinese_light.graph import model_json
 from vector_graph_rag_chinese_light.rag import DEFAULT_CHAT_MODEL, EMBEDDING_MODEL, RETRIEVAL_MODES
+from vector_graph_rag_chinese_light.splitter import SPLITTER_VERSION
 
 
 class ModelConfigurationError(RuntimeError):
@@ -163,7 +164,7 @@ def evaluate_question(rag, test):
 
 
 def index_snapshot(passages):
-    contents = [[p.id, p.source, p.location, p.text, p.title] for p in passages]
+    contents = [[p.id, p.source, p.location, p.text, p.title, p.chunk_metadata] for p in passages]
     return hashlib.sha256(json.dumps(contents, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
@@ -207,7 +208,7 @@ def chroma_fingerprints(rag, passages):
 
 def prepare_index(rag, documents, config):
     index_config = json.dumps({
-        key: config[key] for key in ("documents_sha256", "embedding_model", "chat_model", "chat_url",
+        key: config[key] for key in ("documents_sha256", "splitter_version", "embedding_model", "chat_model", "chat_url",
                                      "passage_collection", "graph_collection")
     }, sort_keys=True)
     with rag.index.connection(write=True) as db:
@@ -286,7 +287,8 @@ def main():
             parser.error("Grading requires a nonempty reference for every question")
         judge = EvaluationChat(key, args.judge_model)
     config = {
-        "schema": 2,
+        "schema": 3,
+        "splitter_version": SPLITTER_VERSION,
         "documents_sha256": hashlib.sha256(args.documents.read_bytes()).hexdigest(),
         "questions_sha256": hashlib.sha256(args.questions.read_bytes()).hexdigest(),
         "embedding_model": EMBEDDING_MODEL,

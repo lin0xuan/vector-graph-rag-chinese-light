@@ -8,10 +8,11 @@ version = "0.1.0"
 description = "A lightweight Chinese vector-graph retrieval and question-answering library"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["fastembed==0.7.4"]
+dependencies = ["fastembed==0.7.4", "chardet>=5,<6", "markdown-it-py>=3,<5"]
 
 [project.optional-dependencies]
-documents = ["pypdf>=5,<7", "python-docx>=1.1,<2"]
+documents = ["pdfplumber>=0.11,<1", "pypdfium2>=4.30,<6"]
+test = ["reportlab>=4,<5", "python-docx>=1.1,<2"]
 
 [project.scripts]
 vgrag-zh = "vector_graph_rag_chinese_light.cli:main"

@@ -8,7 +8,6 @@ from urllib.request import Request, urlopen
 
 from vector_graph_rag_chinese_light import ChineseLightRAG
 from vector_graph_rag_chinese_light.clients import COLLECTIONS
-from vector_graph_rag_chinese_light.documents import chunks, text_blocks
 from vector_graph_rag_chinese_light.graph import query_entities
 
 
@@ -45,11 +44,6 @@ class FixtureChat:
 
 
 class TextTests(unittest.TestCase):
-    def test_locations_and_chunk_limit(self):
-        self.assertEqual(list(text_blocks("一\r\n\r\n二")), [("第 1 行", "一"), ("第 3 行", "二")])
-        self.assertTrue(all(len(part) <= 300 for part in chunks("示例文字" * 250)))
-
-
     def test_entity_extraction_timeout(self):
         def timeout(*args, **kwargs):
             raise URLError(TimeoutError())
@@ -69,6 +63,10 @@ class IntegrationTests(unittest.TestCase):
             try:
                 rag.upsert_text("policy", "示例项目的重大变更必须由示例值守岗审批。", title="示例制度")
                 self.assertEqual(rag.index.passages()[0].title, "示例制度")
+                citation = rag.index.passages()[0].as_dict()
+                self.assertEqual(citation["source_type"], "txt")
+                self.assertEqual(citation["end_offset"], len(citation["text"]))
+                self.assertGreater(citation["token_count"], 0)
                 rag.upsert_text("roster", "示例值守岗由示例成员担任。")
                 result = rag.query("示例值守岗负责什么，由谁担任？")
                 self.assertEqual(result.status, "answered")
