@@ -149,3 +149,77 @@ Qwen 千题在限流下退避，按题落盘。主批结束后仅补跑 18 条�
 evaluation/run.py通过独立包公共API导入JSONL语料并提问。文档行包含source和text，题目行包含id、question、sources及可选reference。启用独立评分模型时需要reference。脚本输出回答全文、片段、分档和Recall@5，便于再核对。
 
 新包的来源标题、文档清单和加载器与历史集成流程存在差异。新跑的成绩请按日期追加，记录题目ID、数据版本、模型、片段口径、判分与接口失败。与历史数字比较时注明具体变化。
+
+### 在独立项目中复测中文千题
+
+用固定版本的 [CRUD-RAG](https://github.com/IAAR-Shanghai/CRUD_RAG/tree/1aace383994e1f68efa12cf2a8e2dadfb4102ceb) 在本地恢复原题和语料。
+
+```sh
+git clone https://github.com/IAAR-Shanghai/CRUD_RAG.git .vgrag-eval/crud-source
+git -C .vgrag-eval/crud-source checkout 1aace383994e1f68efa12cf2a8e2dadfb4102ceb
+python evaluation/prepare_crud.py \
+  --data-dir .vgrag-eval/crud-source/data \
+  --output-dir .vgrag-eval/crud-1000-titled
+```
+
+准备脚本恢复 1,000 道题（双文档、三文档各 500 道）和 2,309 份语料（1,809 份标准新闻及 500 份干扰新闻）。输出文件包含文档、题目和抽样清单。导出的语料使用统一标题「中文新闻」，SHA-256 来源标识用于计分。「中文新闻」参与文档向量编码、关系抽取、原文选证和回答生成。选用同一份导出文件、同一个新数据目录和相同模型配置，依次运行两种模式。第二次复用同一个 Chroma 原文集合、图集合和 SQLite 索引。
+
+```sh
+# 在项目根目录执行，先在当前 shell 配置 SILICONFLOW_API_KEY
+export VGRAG_CHROMA_URL=http://127.0.0.1:18090
+export VGRAG_CHAT_MODEL=Qwen/Qwen3.5-35B-A3B
+for mode in single-stage two-stage; do
+  output=".vgrag-eval/crud-1000-ab-$mode.jsonl"
+  set --
+  if [ -f "$output.manifest.json" ]; then set -- --resume; fi
+  python evaluation/run.py \
+    --documents .vgrag-eval/crud-1000-titled/documents.jsonl \
+    --questions .vgrag-eval/crud-1000-titled/questions.jsonl \
+    --data-dir .vgrag-eval/crud-1000-ab-index \
+    --retrieval-mode "$mode" \
+    --judge-model Qwen/Qwen3.6-35B-A3B \
+    --output "$output" "$@" || break
+done
+```
+
+标准输出给出整体与按标准来源数分组的指标。平均和 P95 查询耗时涵盖检索及回答生成，计时范围从开始查询到返回答案。逐题输出可用于对照每个 ID 的选证和判分。
+
+| 条件 | 历史 79.1% | 独立包本次 A/B |
+|---|---|---|
+| 数据 | 1,000 道题、2,309 份新闻 | 同题、同语料、同顺序 |
+| 切片 | OA 切成 5,169 段 | 同批正文用独立包切成 5,198 段 |
+| 向量和图 | 中文 BGE-small + Chroma，图由 DeepSeek 抽取，共 21,864 条图记录 | 中文 BGE-small + Chroma，按命令用 Qwen3.5 重新抽图，两臂共享新索引 |
+| 检索与判分 | Qwen3.5 召回、选证、回答，Qwen3.6 判分 | 单阶段评原文，两阶段先评关系再评原文，均用 Qwen3.5 回答、Qwen3.6 判分 |
+| 完整答对 | 791/1,000，其中 999 题完成评分，1 题无证据 | 真实千题 A/B 尚未执行 |
+
+独立包两臂可在同一索引上直接比较。若与历史 79.1% 比较，切片、图抽取模型及检索实现的变化都会影响结果。原始语料和运行产物写入 Git 忽略目录。
+
+### 索引校验与续跑
+
+建索引后，评测把 SQLite 快照和 Chroma 原文、图集合的内容指纹写入同一个 SQLite 索引。两份 Chroma 指纹都覆盖已发布语料对应的记录 ID、向量和元数据。续跑或另一模式复用前都会重新读取集合校验，查询前报告不匹配的集合。汇总输出 `index_fingerprints` 可直接核对两臂使用的记录数和 SHA-256。旧版完成的评测索引没有可供比较的指纹，需要用新数据目录和新输出重建。旧结果文件仍可查阅。
+
+
+逐题日志包含原文重排前的候选、最终引用、候选覆盖率、实际执行的模式和回退原因。汇总区分候选未找齐与候选找齐后丢失来源，并单列检索错误和各类回退。逐题记录候选、前五和最终命中的来源 ID。模式回退后，可通过 `effective_mode` 和 `fallback_reason` 查到实际执行的路径。`entity_extraction_status` 单独区分提取成功、正常为空、失败和未执行。空实体与失败都沿用整题向量，失败另记 `entity_extraction_error`，后续重排回退不会覆盖。整体与双、三文档组分别统计 `entity_extraction_failures`。
+
+用原命令加 `--resume` 可继续已有输出。脚本校验语料、题目、索引和模型配置，并跳过已完成的题目。评分模型先用合成题预检，校验通过后才建索引。限流、超时和暂时性服务错误会重试。单题评分最终失败时保留已生成的回答，后续题继续，续跑只补评分。加 `--question-id 2docs:256` 可以只处理指定题，选项可重复使用。JSONL 为追加记录，每个 ID 取最后一条。恢复时会清理中断造成的不完整末行。
+
+### 定向重跑回退题
+
+如果指定题的最近一条记录已生成且已评分，并发生检索回退或实体抽取失败，可用原实验配置重新检索、生成和评分。下面以两阶段结果中的 `2docs:256` 为例，请换成实际回退题 ID。重跑保留旧日志，汇总按每个 ID 的最新记录计一次。若重跑在评分阶段中断，再用普通 `--resume --question-id` 补评分。
+
+```sh
+python evaluation/run.py \
+  --documents .vgrag-eval/crud-1000-titled/documents.jsonl \
+  --questions .vgrag-eval/crud-1000-titled/questions.jsonl \
+  --data-dir .vgrag-eval/crud-1000-ab-index \
+  --retrieval-mode two-stage \
+  --judge-model Qwen/Qwen3.6-35B-A3B \
+  --output .vgrag-eval/crud-1000-ab-two-stage.jsonl \
+  --resume --question-id 2docs:256 --rerun-fallback
+```
+
+### 本地验收与历史结果
+
+[历史逐题记录与复算命令](evaluation/history/README.md)已核对 1,000、322、43、32 题四组数据。旧 Chroma 集合仍在原环境，已通过集合清单确认 5,169 个原文向量和 21,864 条图记录。原千题的完整候选顺序及 322 题两臂回答全文未归档，需要时重新运行相应阶段。
+
+本地验收使用独立 Chroma 实例、真实中文 BGE-small 和可控模型响应。四项测试通过。两种模式共用同一份 SQLite、同一对 Chroma 集合和指纹，切换模式未重复抽取关系。临时实例中删除图记录、保持记录数并替换向量或元数据，均在查询前报错。定向重跑仅处理指定题，恢复为两阶段并重新评分。正常空实体和实体提取失败分别记录。评分配置预检、中断后答案复用、429 重试和按题去重均通过。

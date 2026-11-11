@@ -12,9 +12,12 @@ class Passage:
     source: str
     location: str
     text: str
+    title: str | None = None
 
     def as_dict(self):
-        return asdict(self)
+        result = asdict(self)
+        result.pop("title")
+        return result
 
 
 class Index:
@@ -30,12 +33,17 @@ class Index:
                 );
                 CREATE TABLE IF NOT EXISTS passages (
                     id TEXT PRIMARY KEY, source TEXT NOT NULL,
-                    location TEXT NOT NULL, text TEXT NOT NULL
+                    location TEXT NOT NULL, text TEXT NOT NULL, title TEXT
                 );
                 CREATE INDEX IF NOT EXISTS passages_source ON passages(source);
             """)
             db.execute("INSERT OR IGNORE INTO settings VALUES ('namespace', ?)", (uuid4().hex,))
             self.namespace = db.execute("SELECT value FROM settings WHERE key='namespace'").fetchone()[0]
+
+        with self.connection(write=True) as db:
+            columns = {row[1] for row in db.execute("PRAGMA table_info(passages)")}
+            if "title" not in columns:
+                db.execute("ALTER TABLE passages ADD COLUMN title TEXT")
 
     @contextmanager
     def connection(self, write=False):
@@ -51,14 +59,14 @@ class Index:
     def passages(self):
         with self.connection() as db:
             return [Passage(*row) for row in db.execute(
-                "SELECT id, source, location, text FROM passages ORDER BY source, rowid"
+                "SELECT id, source, location, text, title FROM passages ORDER BY source, rowid"
             )]
 
     def replace(self, db, source, passages):
         db.execute("DELETE FROM passages WHERE source=?", (source,))
         db.executemany(
-            "INSERT INTO passages VALUES (?, ?, ?, ?)",
-            ((p.id, p.source, p.location, p.text) for p in passages),
+            "INSERT INTO passages (id, source, location, text, title) VALUES (?, ?, ?, ?, ?)",
+            ((p.id, p.source, p.location, p.text, p.title) for p in passages),
         )
 
     def remove(self, source):

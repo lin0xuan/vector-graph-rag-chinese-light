@@ -3,7 +3,7 @@ import argparse
 import json
 from urllib.error import HTTPError
 
-from .rag import ChineseLightRAG
+from .rag import ChineseLightRAG, RETRIEVAL_MODES
 
 
 def main():
@@ -15,12 +15,13 @@ def main():
     ingest.add_argument("--source", help="Stable identifier used to replace or remove the document")
     ask = commands.add_parser("ask", help="Answer a question and return source excerpts")
     ask.add_argument("question")
+    ask.add_argument("--retrieval-mode", choices=RETRIEVAL_MODES)
     remove = commands.add_parser("remove", help="Remove a source from the searchable index")
     remove.add_argument("source")
 
     args = parser.parse_args()
     try:
-        rag = ChineseLightRAG(args.data_dir)
+        rag = ChineseLightRAG(args.data_dir, retrieval_mode=getattr(args, "retrieval_mode", None))
         if args.command == "ingest":
             result = {"passages": rag.upsert_file(args.path, source=args.source)}
         elif args.command == "ask":
