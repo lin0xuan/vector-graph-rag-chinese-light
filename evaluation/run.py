@@ -15,7 +15,9 @@ from urllib.error import HTTPError
 from vector_graph_rag_chinese_light import ChineseLightRAG
 from vector_graph_rag_chinese_light.clients import Chat
 from vector_graph_rag_chinese_light.graph import model_json
-from vector_graph_rag_chinese_light.rag import DEFAULT_CHAT_MODEL, EMBEDDING_MODEL, RETRIEVAL_MODES
+from vector_graph_rag_chinese_light.rag import (
+    DEFAULT_CHAT_MODEL, EMBEDDING_MODEL, QUERY_PIPELINE_VERSION, RETRIEVAL_MODES,
+)
 from vector_graph_rag_chinese_light.splitter import SPLITTER_VERSION
 
 
@@ -288,6 +290,7 @@ def main():
         judge = EvaluationChat(key, args.judge_model)
     config = {
         "schema": 3,
+        "query_pipeline_version": QUERY_PIPELINE_VERSION,
         "splitter_version": SPLITTER_VERSION,
         "documents_sha256": hashlib.sha256(args.documents.read_bytes()).hexdigest(),
         "questions_sha256": hashlib.sha256(args.questions.read_bytes()).hexdigest(),
@@ -300,7 +303,7 @@ def main():
     if config["retrieval_mode"] not in RETRIEVAL_MODES:
         parser.error("Unknown retrieval mode")
     saved_config = json.loads(manifest.read_text(encoding="utf-8")) if args.resume else None
-    mismatch = "Resume requires the original corpus, index, retrieval mode and model settings"
+    mismatch = "Resume requires the original corpus, index, query pipeline, retrieval mode and model settings"
     if saved_config is not None and any(saved_config.get(key) != value for key, value in config.items()):
         parser.error(mismatch)
     latest = previous_rows(output)

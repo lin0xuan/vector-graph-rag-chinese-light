@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 from vector_graph_rag_chinese_light import ChineseLightRAG
 from vector_graph_rag_chinese_light.clients import COLLECTIONS
 from vector_graph_rag_chinese_light.graph import query_entities
+from vector_graph_rag_chinese_light.index import Passage
 
 
 class FixtureChat:
@@ -16,8 +17,10 @@ class FixtureChat:
         self.fail = False
         self.relation_rankings = []
         self.fail_relation_ranking = False
+        self.calls = []
 
     def __call__(self, system, data, max_tokens, timeout=25):
+        self.calls.append((data, max_tokens))
         if self.fail:
             raise ValueError("Simulated extraction failure")
         if "items" in data:
@@ -44,6 +47,31 @@ class FixtureChat:
 
 
 class TextTests(unittest.TestCase):
+    def test_balanced_candidates_deduplicate_without_losing_title_context(self):
+        rag = object.__new__(ChineseLightRAG)
+        passages = {
+            'a': Passage('a', 'first', '', '收入为十万元。', '2023年'),
+            'copy': Passage('copy', 'reprint', '', '收入为十万元。', '2023年'),
+            'year': Passage('year', 'other-year', '', '收入为十万元。', '2024年'),
+            'bridge': Passage('bridge', 'roster', '', '负责人为李某。', '名单'),
+            'last': Passage('last', 'policy', '', '该规定不适用于分公司。', '制度'),
+        }
+        self.assertEqual(rag._merge_candidates(
+            passages, ['a', 'copy', 'year'], ['a', 'a', 'bridge', 'last'],
+        ), ['a', 'bridge', 'year', 'last'])
+
+    def test_balanced_candidates_bound_both_branches_and_fill_after_duplicates(self):
+        rag = object.__new__(ChineseLightRAG)
+        passages = {f'{branch}{i}': Passage(f'{branch}{i}', 'news', '', f'{branch}独有事实{i}')
+                    for branch in ('d', 'g') for i in range(30)}
+        dense = [f'd{i}' for i in range(12)]
+        graph = [f'g{i}' for i in range(30)]
+        self.assertEqual(rag._merge_candidates(passages, dense, graph),
+                         [pid for i in range(12) for pid in (f'd{i}', f'g{i}')])
+        passages.update({f'copy{i}': Passage(f'copy{i}', 'news', '', 'd独有事实0') for i in range(30)})
+        self.assertEqual(rag._merge_candidates(passages, [], [f'copy{i}' for i in range(30)] + graph),
+                         ['copy0'] + graph[:23])
+
     def test_entity_extraction_timeout(self):
         def timeout(*args, **kwargs):
             raise URLError(TimeoutError())
@@ -68,7 +96,10 @@ class IntegrationTests(unittest.TestCase):
                 self.assertEqual(citation["end_offset"], len(citation["text"]))
                 self.assertGreater(citation["token_count"], 0)
                 rag.upsert_text("roster", "示例值守岗由示例成员担任。")
+                before_query = len(chat.calls)
                 result = rag.query("示例值守岗负责什么，由谁担任？")
+                self.assertEqual(len(chat.calls) - before_query, 3)
+                self.assertEqual(chat.calls[-1][1], 1000)
                 self.assertEqual(result.status, "answered")
                 self.assertEqual({p.source for p in result.citations}, {"policy", "roster"})
                 self.assertIn("示例成员", result.answer)
@@ -78,7 +109,10 @@ class IntegrationTests(unittest.TestCase):
                                             retrieval_mode="two-stage")
                 question = "示例值守岗负责什么，由谁担任？"
                 trace = {}
+                before_query = len(chat.calls)
                 result = two_stage.query(question, trace=trace)
+                self.assertEqual(len(chat.calls) - before_query, 4)
+                self.assertEqual(chat.calls[-1][1], 1000)
                 self.assertEqual(trace["effective_mode"], "two-stage")
                 self.assertEqual({p["source"] for p in trace["candidates"]}, {"policy", "roster"})
                 self.assertEqual(result.status, "answered")

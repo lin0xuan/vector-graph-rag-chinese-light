@@ -155,6 +155,11 @@ class EvaluationIntegrationTests(unittest.TestCase):
                                      for data in events[before_two:]), 1)
                 wait.assert_called_once()
                 before_skip = len(events)
+                with patch.object(run, "QUERY_PIPELINE_VERSION", "different-query-pipeline"):
+                    with self.assertRaises(SystemExit), redirect_stderr(StringIO()) as errors:
+                        invoke("two-stage", two, "--resume")
+                    self.assertIn("query pipeline", errors.getvalue())
+                self.assertEqual(len(events), before_skip)
                 self.assertEqual(invoke("two-stage", two, "--resume"), two_summary)
                 self.assertEqual(len(events), before_skip)
 
